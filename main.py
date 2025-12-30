@@ -146,6 +146,69 @@ def get_kg_video_info(url):
         print(f"KG Parse Error: {e}")
         return None
 
+def get_bilibili_video_info_fallback(url):
+    """
+    Bilibili API 备用解析逻辑 (当 yt-dlp 412 时使用)
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.bilibili.com/"
+    }
+    
+    try:
+        # 1. 提取 BV 号
+        bvid_match = re.search(r'(BV\w+)', url)
+        if not bvid_match:
+            return None
+        bvid = bvid_match.group(1)
+        
+        # 2. 获取视频信息 (CID, 标题)
+        info_api = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+        resp = requests.get(info_api, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if data['code'] != 0:
+            print(f"Bili API Error: {data['message']}")
+            return None
+            
+        video_data = data['data']
+        title = video_data['title']
+        thumbnail = video_data['pic']
+        duration = video_data['duration']
+        cid = video_data['cid']
+        
+        # 3. 获取播放地址
+        # platform=html5 通常返回 mp4，不需要复杂的 dash 合并
+        play_api = f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&qn=64&type=mp4&platform=html5&high_quality=1"
+        play_resp = requests.get(play_api, headers=headers)
+        play_data = play_resp.json()
+        
+        formats = []
+        if play_data['code'] == 0 and 'durl' in play_data['data']:
+            for durl in play_data['data']['durl']:
+                formats.append({
+                    "url": durl['url'],
+                    "ext": "mp4",
+                    "format_note": "API Fallback (可能会有画质限制)",
+                    "filesize": durl.get('size'),
+                    "format_id": "api_mp4",
+                    "has_audio": True,
+                    "type": "video"
+                })
+        
+        return {
+            "title": title,
+            "thumbnail": thumbnail,
+            "duration": duration,
+            "webpage_url": f"https://www.bilibili.com/video/{bvid}",
+            "formats": formats
+        }
+        
+    except Exception as e:
+        print(f"Bili Fallback Error: {e}")
+        return None
+
 @app.get("/")
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
@@ -237,6 +300,14 @@ async def resolve_video(request: VideoRequest):
             
     except Exception as e:
         print(f"Error: {e}")
+        
+        # 尝试 Bilibili 备用解析
+        if "bilibili" in url or "b23.tv" in url:
+             print("Trying Bilibili fallback...")
+             fallback_info = get_bilibili_video_info_fallback(url)
+             if fallback_info:
+                 return fallback_info
+                 
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/download_merged")
@@ -246,6 +317,26 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
     注意：在 Vercel 等 Serverless 环境可能会因为超时或缺少 ffmpeg 而失败
     """
     url = request.url
+    
+    # 清理文件名
+    # filename = f"{request.title}.mp4" 
+    # safe_title = re.sub(r'[\\/*?:"<>|]', "", request.title).strip()
+    # if not safe_title:
+    #     safe_title = "video"
+    
+    # 之前已经有 safe_title 定义，这里整理一下
+    safe_title = "".join([c for c in request.title if c.isalpha() or c.isdigit() or c in (' ', '-', '_', '.')]).rstrip()
+    if not safe_title:
+        safe_title = "video"
+    filename = f"{safe_title}.mp4"
+    file_path = os.path.join(DOWNLOAD_DIR, filename)
+    
+    # 如果文件已存在，先删除（避免冲突）
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except:
+            pass
     
     # 针对全民K歌等直链，如果 yt-dlp 不支持，尝试手动解析获取直链进行下载
     # 简单的判断逻辑：如果是全民K歌链接
@@ -272,8 +363,29 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
                  print(f"Stream Error: {e}")
                  raise HTTPException(status_code=400, detail=f"Stream failed: {e}")
 
-    # 检查 ffmpeg 是否可用
-    ffmpeg_available = False
+    # 针对 Bilibili 备用逻辑
+     if "bilibili.com" in url or "b23.tv" in url:
+          # 只有当非直链下载时才尝试 fallback
+          fallback_info = get_bilibili_video_info_fallback(url)
+          if fallback_info and fallback_info.get('formats'):
+              direct_url = fallback_info['formats'][0]['url']
+              print(f"Detected Bili URL, resolved to fallback direct URL: {direct_url}")
+              headers = {
+                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                 "Referer": "https://www.bilibili.com/"
+              }
+              try:
+                 r = requests.get(direct_url, headers=headers, stream=True)
+                 return StreamingResponse(
+                     r.iter_content(chunk_size=8192),
+                     media_type=r.headers.get("Content-Type", "video/mp4"),
+                     headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'}
+                 )
+              except Exception as e:
+                  print(f"Bili Stream Error: {e}")
+ 
+     # 检查 ffmpeg 是否可用
+     ffmpeg_available = False
     try:
         # 简单检查 ffmpeg 命令
         import subprocess
