@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全能视频下载器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+    <div class="container mx-auto px-4 py-8 max-w-3xl">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">全能视频下载器</h1>
+            <p class="text-gray-600">支持 Bilibili、YouTube、全民K歌 等平台视频解析下载</p>
+        </header>
+
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex flex-col md:flex-row gap-4">
+                <input type="text" id="videoUrl" placeholder="粘贴视频链接到这里..." 
+                    class="flex-1 px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                <button onclick="resolveVideo()" 
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg transition duration-200 flex items-center justify-center min-w-[120px]">
+                    <span id="btnText">解析</span>
+                    <div id="loading" class="loader ease-linear rounded-full border-2 border-t-2 border-gray-200 h-5 w-5 ml-2 hidden"></div>
+                </button>
+            </div>
+            <p id="errorMsg" class="text-red-500 mt-3 hidden text-sm"></p>
+        </div>
+
+        <div id="resultArea" class="hidden">
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <div class="md:flex">
+                    <div class="md:flex-shrink-0">
+                        <img id="thumbnail" class="h-48 w-full object-cover md:w-48" src="" alt="Video Thumbnail">
+                    </div>
+                    <div class="p-8 w-full">
+                        <div class="uppercase tracking-wide text-sm text-indigo-500 font-semibold" id="platform">已解析视频</div>
+                        <h2 id="videoTitle" class="block mt-1 text-lg leading-tight font-medium text-black"></h2>
+                        <p id="videoDuration" class="mt-2 text-gray-500"></p>
+                        
+                        <div class="mt-6">
+                            <!-- 新增：一键下载最佳画质按钮 -->
+                            <div class="mb-4">
+                                <button onclick="downloadMerged()" id="mergeBtn"
+                                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded shadow flex items-center justify-center transition">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                    一键下载最佳画质 (自动合并音视频)
+                                </button>
+                                <p id="mergeMsg" class="text-center text-sm text-gray-500 mt-2 hidden">正在后台下载并合并，请稍候...（大文件可能需要几分钟）</p>
+                            </div>
+
+                            <h3 class="text-sm font-semibold text-gray-600 mb-3">其他下载选项 (手动选择):</h3>
+                            <div id="downloadOptions" class="space-y-2">
+                                <!-- 下载按钮将插入这里 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer class="text-center text-gray-400 text-sm mt-12">
+            <p>仅供个人学习研究使用，请勿用于商业用途</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+             const urlInput = document.getElementById('videoUrl');
+             urlInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    resolveVideo();
+                }
+            });
+        });
+
+        async function resolveVideo() {
+            const urlInput = document.getElementById('videoUrl');
+            const url = urlInput.value.trim();
+            const btnText = document.getElementById('btnText');
+            const loading = document.getElementById('loading');
+            const errorMsg = document.getElementById('errorMsg');
+            const resultArea = document.getElementById('resultArea');
+            const downloadOptions = document.getElementById('downloadOptions');
+
+            if (!url) {
+                showError('请输入有效的视频链接');
+                return;
+            }
+
+            // Reset UI
+            errorMsg.classList.add('hidden');
+            resultArea.classList.add('hidden');
+            btnText.textContent = '解析中';
+            loading.classList.remove('hidden');
+            downloadOptions.innerHTML = '';
+
+            try {
+                const response = await fetch('/api/resolve', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '解析失败');
+                }
+
+                // Fill Data
+                document.getElementById('thumbnail').src = data.thumbnail || 'https://via.placeholder.com/300x200?text=No+Thumbnail';
+                document.getElementById('videoTitle').textContent = data.title;
+                if (data.duration) {
+                     const minutes = Math.floor(data.duration / 60);
+                     const seconds = data.duration % 60;
+                     document.getElementById('videoDuration').textContent = `时长: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                } else {
+                    document.getElementById('videoDuration').textContent = '';
+                }
+                
+                // Generate Download Buttons
+                if (data.formats && data.formats.length > 0) {
+                    data.formats.forEach(format => {
+                        const btn = document.createElement('a');
+                        // 使用代理下载
+                        const filename = `${data.title}.${format.ext}`.replace(/[\\/:*?"<>|]/g, '_'); // sanitize filename
+                        const downloadUrl = `/api/proxy_download?url=${encodeURIComponent(format.url)}&name=${encodeURIComponent(filename)}`;
+                        
+                        btn.href = downloadUrl;
+                        // btn.target = "_blank"; // 代理下载不需要 target blank，直接触发下载
+                        
+                        let sizeStr = '';
+                        if (format.filesize) {
+                            sizeStr = ` - ${(format.filesize / 1024 / 1024).toFixed(1)} MB`;
+                        }
+
+                        let extraClass = "bg-gray-50 hover:bg-gray-100 text-gray-700";
+                        let noteHtml = `<span class="font-bold uppercase">${format.ext}</span> ${format.format_note}`;
+                        
+                        if (format.has_audio === false) { // 显式检查 false，因为有些可能 undefined
+                             extraClass = "bg-yellow-50 hover:bg-yellow-100 text-yellow-800 border-yellow-200";
+                             noteHtml += ` <span class="text-xs bg-yellow-200 text-yellow-800 px-1 rounded ml-2">无音频</span>`;
+                        } else if (format.type === 'audio') {
+                             extraClass = "bg-green-50 hover:bg-green-100 text-green-800 border-green-200";
+                             noteHtml = `<span class="font-bold uppercase">AUDIO</span> ${format.format_note}`;
+                        }
+
+                        btn.className = `block w-full text-left px-4 py-2 border border-gray-200 rounded hover:text-blue-600 transition flex justify-between items-center group ${extraClass}`;
+                        btn.innerHTML = `
+                            <span>${noteHtml}</span>
+                            <span class="text-sm opacity-70 group-hover:text-blue-500">${sizeStr} ↓</span>
+                        `;
+                        downloadOptions.appendChild(btn);
+                    });
+                } else {
+                     downloadOptions.innerHTML = '<p class="text-gray-500">未找到可下载的格式</p>';
+                }
+
+                resultArea.classList.remove('hidden');
+
+            } catch (err) {
+                showError(err.message);
+            } finally {
+                btnText.textContent = '解析';
+                loading.classList.add('hidden');
+            }
+        }
+
+        function showError(msg) {
+            const errorMsg = document.getElementById('errorMsg');
+            errorMsg.textContent = msg;
+            errorMsg.classList.remove('hidden');
+        }
+
+        async function downloadMerged() {
+            const urlInput = document.getElementById('videoUrl');
+            const url = urlInput.value.trim();
+            const title = document.getElementById('videoTitle').textContent;
+            
+            const btn = document.getElementById('mergeBtn');
+            const msg = document.getElementById('mergeMsg');
+            
+            if (!url) return;
+            
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            btn.textContent = '处理中...';
+            msg.classList.remove('hidden');
+            
+            try {
+                const response = await fetch('/api/download_merged', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url, title: title }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || '下载失败');
+                }
+                
+                // 触发下载
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                
+                // 默认文件名
+                let filename = `${title}.mp4`.replace(/[\\/:*?"<>|]/g, '_');
+                
+                // 尝试从 Header 获取更准确的文件名
+                const contentDisposition = response.headers.get('Content-Disposition');
+                if (contentDisposition) {
+                    // 尝试匹配 filename*=UTF-8''xxx (优先)
+                    const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+                    if (filenameStarMatch && filenameStarMatch[1]) {
+                        filename = decodeURIComponent(filenameStarMatch[1]);
+                    } else {
+                        // 尝试匹配 filename="xxx"
+                        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+                        if (filenameMatch && filenameMatch[1]) {
+                            filename = filenameMatch[1];
+                        }
+                    }
+                }
+
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+                
+            } catch (err) {
+                alert(`下载出错: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                btn.innerHTML = `<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg> 一键下载最佳画质 (自动合并音视频)`;
+                msg.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>

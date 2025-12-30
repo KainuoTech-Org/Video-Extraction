@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# Downloads
+downloads/
+
+# Binaries
+bin/
+
+# OS
+.DS_Store
