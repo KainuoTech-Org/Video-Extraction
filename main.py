@@ -232,20 +232,31 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
     注意：在 Vercel 等 Serverless 环境可能会因为超时或缺少 ffmpeg 而失败
     """
     url = request.url
-    # 清理文件名
-    safe_title = "".join([c for c in request.title if c.isalpha() or c.isdigit() or c in (' ', '-', '_', '.')]).rstrip()
-    if not safe_title:
-        safe_title = "video"
     
-    filename = f"{safe_title}.mp4"
-    file_path = os.path.join(DOWNLOAD_DIR, filename)
-    
-    # 如果文件已存在，先删除（避免冲突）
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except:
-            pass
+    # 针对全民K歌等直链，如果 yt-dlp 不支持，尝试手动解析获取直链进行下载
+    # 简单的判断逻辑：如果是全民K歌链接
+    if "kg.qq.com" in url:
+         info = get_kg_video_info(url)
+         if info and info.get('formats'):
+             # 获取直链
+             direct_url = info['formats'][0]['url']
+             print(f"Detected KG URL, resolved to direct URL: {direct_url}")
+             
+             # 如果是直链，直接流式传输，不使用 yt-dlp 下载到本地（节省 Vercel 资源）
+             # 复用 proxy_download 的逻辑
+             headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+             }
+             try:
+                r = requests.get(direct_url, headers=headers, stream=True)
+                return StreamingResponse(
+                    r.iter_content(chunk_size=8192),
+                    media_type=r.headers.get("Content-Type", "video/mp4"),
+                    headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'}
+                )
+             except Exception as e:
+                 print(f"Stream Error: {e}")
+                 raise HTTPException(status_code=400, detail=f"Stream failed: {e}")
 
     # 检查 ffmpeg 是否可用
     ffmpeg_available = False
@@ -263,6 +274,7 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
         'outtmpl': os.path.join(DOWNLOAD_DIR, f'{safe_title}.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
+        'cache_dir': '/tmp/yt-dlp-cache', # Vercel 必须指定可写缓存目录
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
