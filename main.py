@@ -156,9 +156,23 @@ def get_bilibili_video_info_fallback(url):
     }
     
     try:
+        # 0. 处理短链接跳转 (如 b23.tv)
+        if "b23.tv" in url:
+            print(f"Resolving short URL: {url}")
+            try:
+                # 使用 GET 请求获取重定向后的 URL，stream=True 避免下载内容
+                # 某些情况下 HEAD 请求可能被拒绝，GET 更稳妥
+                resp = requests.get(url, headers=headers, allow_redirects=True, stream=True)
+                url = resp.url
+                resp.close()
+                print(f"Resolved URL: {url}")
+            except Exception as e:
+                print(f"Resolve b23.tv error: {e}")
+
         # 1. 提取 BV 号
         bvid_match = re.search(r'(BV\w+)', url)
         if not bvid_match:
+            print(f"No BV id found in url: {url}")
             return None
         bvid = bvid_match.group(1)
         
