@@ -20,6 +20,10 @@ os.environ["PATH"] += os.pathsep + os.path.abspath("bin")
 app = FastAPI()
 
 # 挂载静态文件和模板
+# 检查 static 目录是否存在，如果不存在（例如在 Vercel 环境可能被过滤），则跳过挂载或创建空目录
+if not os.path.exists("static"):
+    os.makedirs("static")
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
