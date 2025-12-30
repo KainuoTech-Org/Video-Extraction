@@ -368,28 +368,28 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
                  raise HTTPException(status_code=400, detail=f"Stream failed: {e}")
 
     # 针对 Bilibili 备用逻辑
-     if "bilibili.com" in url or "b23.tv" in url:
-          # 只有当非直链下载时才尝试 fallback
-          fallback_info = get_bilibili_video_info_fallback(url)
-          if fallback_info and fallback_info.get('formats'):
-              direct_url = fallback_info['formats'][0]['url']
-              print(f"Detected Bili URL, resolved to fallback direct URL: {direct_url}")
-              headers = {
-                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                 "Referer": "https://www.bilibili.com/"
-              }
-              try:
-                 r = requests.get(direct_url, headers=headers, stream=True)
-                 return StreamingResponse(
-                     r.iter_content(chunk_size=8192),
-                     media_type=r.headers.get("Content-Type", "video/mp4"),
-                     headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'}
-                 )
-              except Exception as e:
-                  print(f"Bili Stream Error: {e}")
- 
-     # 检查 ffmpeg 是否可用
-     ffmpeg_available = False
+    if "bilibili.com" in url or "b23.tv" in url:
+        # 只有当非直链下载时才尝试 fallback
+        fallback_info = get_bilibili_video_info_fallback(url)
+        if fallback_info and fallback_info.get('formats'):
+            direct_url = fallback_info['formats'][0]['url']
+            print(f"Detected Bili URL, resolved to fallback direct URL: {direct_url}")
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://www.bilibili.com/"
+            }
+            try:
+                r = requests.get(direct_url, headers=headers, stream=True)
+                return StreamingResponse(
+                    r.iter_content(chunk_size=8192),
+                    media_type=r.headers.get("Content-Type", "video/mp4"),
+                    headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'}
+                )
+            except Exception as e:
+                print(f"Bili Stream Error: {e}")
+
+    # 检查 ffmpeg 是否可用
+    ffmpeg_available = False
     try:
         # 简单检查 ffmpeg 命令
         import subprocess
