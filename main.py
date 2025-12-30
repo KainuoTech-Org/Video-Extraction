@@ -20,11 +20,14 @@ os.environ["PATH"] += os.pathsep + os.path.abspath("bin")
 app = FastAPI()
 
 # 挂载静态文件和模板
-# 检查 static 目录是否存在，如果不存在（例如在 Vercel 环境可能被过滤），则跳过挂载或创建空目录
-if not os.path.exists("static"):
-    os.makedirs("static")
+# Vercel Serverless 环境源码目录通常是只读的，无法动态创建目录
+# 我们已在 git 中添加了 static/.gitkeep 以确保目录存在
+# 但为了双重保险，如果目录仍然不存在（极少数情况），我们跳过挂载，避免 500 错误
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+else:
+    print("Warning: 'static' directory not found. Static files will not be served.")
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # 临时下载目录
