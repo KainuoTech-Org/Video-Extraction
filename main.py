@@ -24,9 +24,16 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # 临时下载目录
-DOWNLOAD_DIR = "downloads"
+# 在 Vercel 等无服务器环境中，只有 /tmp 是可写的
+DOWNLOAD_DIR = "/tmp/downloads" if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME") else "downloads"
+
 if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
+    try:
+        os.makedirs(DOWNLOAD_DIR)
+    except Exception as e:
+        print(f"Warning: Could not create download dir {DOWNLOAD_DIR}: {e}")
+        # Fallback to /tmp directly if subfolder creation fails
+        DOWNLOAD_DIR = "/tmp"
 
 def cleanup_file(path: str):
     """后台任务：清理临时文件"""
@@ -56,26 +63,75 @@ def get_kg_video_info(url):
         resp.raise_for_status()
         content = resp.text
         
-        # 尝试提取播放地址
-        # 全民K歌页面通常包含 playurl 变量
-        play_url_match = re.search(r'playurl\s*[:=]\s*["\'](.*?)["\']', content)
-        if not play_url_match:
-            play_url_match = re.search(r'src\s*=\s*["\'](http.*?mp4.*?)["\']', content)
-            
-        # 提取标题
-        title_match = re.search(r'<title>(.*?)</title>', content)
-        title = title_match.group(1) if title_match else "全民K歌视频"
+        video_url = None
+        title = "全民K歌视频"
+        thumbnail = ""
         
-        if play_url_match:
-            video_url = play_url_match.group(1)
+        # 1. 尝试从 window.__DATA__ 中提取
+        data_match = re.search(r'window\.__DATA__\s*=\s*({.*?});', content, re.DOTALL)
+        if data_match:
+            try:
+                # 简单解析 JSON 字符串
+                json_str = data_match.group(1)
+                
+                # 提取 playurl
+                playurl_match = re.search(r'"playurl":"(.*?)"', json_str)
+                if playurl_match:
+                    video_url = playurl_match.group(1)
+                
+                # 提取标题 (content 或 nick)
+                nick_match = re.search(r'"nick":"(.*?)"', json_str)
+                content_match = re.search(r'"content":"(.*?)"', json_str)
+                
+                if content_match and nick_match:
+                     title = f"{nick_match.group(1)} - {content_match.group(1)}"
+                elif content_match:
+                     title = content_match.group(1)
+                elif nick_match:
+                     title = nick_match.group(1)
+                
+                # 提取封面
+                cover_match = re.search(r'"cover":"(.*?)"', json_str)
+                if cover_match:
+                    thumbnail = cover_match.group(1)
+                    
+            except Exception as e:
+                print(f"JSON Parse Error: {e}")
+
+        # 2. 如果 JSON 提取失败，回退到旧的正则匹配
+        if not video_url:
+            # 尝试提取播放地址
+            # 全民K歌页面通常包含 playurl 变量
+            play_url_match = re.search(r'playurl\s*[:=]\s*["\'](.*?)["\']', content)
+            if not play_url_match:
+                play_url_match = re.search(r'src\s*=\s*["\'](http.*?mp4.*?)["\']', content)
+            
+            if play_url_match:
+                video_url = play_url_match.group(1)
+                
+            # 提取标题
+            title_match = re.search(r'<title>(.*?)</title>', content)
+            if title_match:
+                 title = title_match.group(1)
+        
+        if video_url:
+            # 判断文件类型 (m4a 是音频)
+            ext = "mp4"
+            type_label = "video"
+            if ".m4a" in video_url or ".mp3" in video_url:
+                ext = "m4a"
+                type_label = "audio"
+
             return {
                 "title": title,
-                "thumbnail": "", # 可以尝试提取封面，这里先留空
+                "thumbnail": thumbnail,
                 "formats": [{
                     "url": video_url,
-                    "ext": "mp4",
+                    "ext": ext,
                     "format_note": "Default",
-                    "filesize": 0 # 未知大小
+                    "filesize": 0, # 未知大小
+                    "has_audio": True,
+                    "type": type_label
                 }]
             }
         return None
@@ -173,6 +229,7 @@ async def resolve_video(request: VideoRequest):
 async def download_merged(request: DownloadRequest, background_tasks: BackgroundTasks):
     """
     下载并合并视频（如果需要）
+    注意：在 Vercel 等 Serverless 环境可能会因为超时或缺少 ffmpeg 而失败
     """
     url = request.url
     # 清理文件名
@@ -190,16 +247,34 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
         except:
             pass
 
+    # 检查 ffmpeg 是否可用
+    ffmpeg_available = False
+    try:
+        # 简单检查 ffmpeg 命令
+        import subprocess
+        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ffmpeg_available = True
+    except:
+        # 尝试检查 bin 目录
+        if os.path.exists("bin/ffmpeg"):
+             ffmpeg_available = True
+    
     ydl_opts = {
-        'format': 'bestvideo+bestaudio/best', # 尝试合并最佳视频+最佳音频
         'outtmpl': os.path.join(DOWNLOAD_DIR, f'{safe_title}.%(ext)s'),
-        'merge_output_format': 'mp4',
         'quiet': True,
         'no_warnings': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         }
     }
+
+    if ffmpeg_available:
+        ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        ydl_opts['merge_output_format'] = 'mp4'
+    else:
+        # 如果没有 ffmpeg，回退到 best，不尝试合并
+        print("FFmpeg not found, falling back to 'best' format without merge.")
+        ydl_opts['format'] = 'best'
     
     try:
         # 使用 yt-dlp 下载并合并
