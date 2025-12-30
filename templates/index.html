@@ -86,7 +86,16 @@
 
         async function resolveVideo() {
             const urlInput = document.getElementById('videoUrl');
-            const url = urlInput.value.trim();
+            let url = urlInput.value.trim();
+
+            // 尝试提取 URL (处理包含文字的情况)
+            const urlMatch = url.match(/(https?:\/\/[^\s]+)/);
+            if (urlMatch) {
+                url = urlMatch[0].replace(/[.,;?!，。；？！]+$/, '');
+                // 自动更新输入框为纯链接，给用户反馈
+                urlInput.value = url;
+            }
+
             const btnText = document.getElementById('btnText');
             const loading = document.getElementById('loading');
             const errorMsg = document.getElementById('errorMsg');

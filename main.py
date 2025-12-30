@@ -51,6 +51,15 @@ def cleanup_file(path: str):
     except Exception as e:
         print(f"Error deleting file {path}: {e}")
 
+def extract_valid_url(text: str) -> str:
+    """从文本中提取合法的 URL"""
+    match = re.search(r'(https?://[^\s]+)', text)
+    if match:
+        url = match.group(1)
+        # 去除末尾可能的标点符号
+        return url.rstrip('.,;?!，。；？！')
+    return text.strip()
+
 class VideoRequest(BaseModel):
     url: str
 
@@ -229,7 +238,7 @@ async def index(request: Request):
 
 @app.post("/api/resolve")
 async def resolve_video(request: VideoRequest):
-    url = request.url
+    url = extract_valid_url(request.url)
     
     # 1. 优先尝试自定义轻量级解析 (针对 Bilibili 和 KG)
     # 这样可以避免 invoke yt-dlp (较慢且易被屏蔽)
@@ -334,7 +343,7 @@ async def download_merged(request: DownloadRequest, background_tasks: Background
     下载并合并视频（如果需要）
     注意：在 Vercel 等 Serverless 环境可能会因为超时或缺少 ffmpeg 而失败
     """
-    url = request.url
+    url = extract_valid_url(request.url)
     
     # 清理文件名
     # filename = f"{request.title}.mp4" 
