@@ -163,11 +163,18 @@ async def resolve_video(request: VideoRequest):
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        # 'format': 'best', # 移除强制 format，避免报错
+        'cache_dir': '/tmp/yt-dlp-cache', 
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+            'Sec-Fetch-Mode': 'navigate',
         }
     }
+    
+    # 针对 Bilibili 添加 Referer
+    if "bilibili.com" in url or "b23.tv" in url:
+        ydl_opts['http_headers']['Referer'] = 'https://www.bilibili.com/'
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
