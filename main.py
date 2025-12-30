@@ -217,11 +217,22 @@ async def index(request: Request):
 async def resolve_video(request: VideoRequest):
     url = request.url
     
-    # 全民K歌特殊处理 (如果 yt-dlp 失败或作为优先尝试)
-    if "kg.qq.com" in url:
-        info = get_kg_video_info(url)
-        if info:
-            return info
+    # 1. 优先尝试自定义轻量级解析 (针对 Bilibili 和 KG)
+    # 这样可以避免 invoke yt-dlp (较慢且易被屏蔽)
+    try:
+        if "kg.qq.com" in url:
+            info = get_kg_video_info(url)
+            if info:
+                return info
+                
+        if "bilibili.com" in url or "b23.tv" in url:
+            # 优先尝试 API 解析
+            info = get_bilibili_video_info_fallback(url)
+            if info:
+                return info
+    except Exception as e:
+        print(f"Custom parser failed: {e}")
+        # 失败了继续走 yt-dlp
             
     ydl_opts = {
         'quiet': True,
@@ -300,14 +311,7 @@ async def resolve_video(request: VideoRequest):
             
     except Exception as e:
         print(f"Error: {e}")
-        
-        # 尝试 Bilibili 备用解析
-        if "bilibili" in url or "b23.tv" in url:
-             print("Trying Bilibili fallback...")
-             fallback_info = get_bilibili_video_info_fallback(url)
-             if fallback_info:
-                 return fallback_info
-                 
+        # 如果自定义解析和 yt-dlp 都失败了，直接抛出异常
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/download_merged")
